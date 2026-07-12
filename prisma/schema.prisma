@@ -1,0 +1,67 @@
+// hadrontool-google-cal — the tool's OWN small database.
+//
+// Boundary (hadron-server#396 pattern): this tool owns everything
+// provider-specific — encrypted Google refresh tokens and idempotency
+// records. hadron-server keeps only the connection identity record and runs
+// authorization BEFORE it ever calls this service; there are zero Google
+// Calendar columns in core.
+//
+// v1 is the operations plane only (no Calendar push channels), so unlike
+// hadrontool-gmail there is no watch state, no notification dedupe ledger —
+// see docs/architecture.md for the v2 event-plane sketch.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ConnectionStatus {
+  ACTIVE
+  ERROR
+}
+
+/// One connected Google Calendar account. The `id` is returned to
+/// hadron-server at creation time and is the `connectionId` every operation
+/// call carries.
+model Connection {
+  id              String           @id @default(cuid())
+  provider        String           @default("google-cal")
+  accountEmail    String           @map("account_email")
+  displayName     String?          @map("display_name")
+  /// AES-256-GCM-encrypted Google refresh token (iv‖tag‖ciphertext, base64),
+  /// under this tool's own TOKEN_ENCRYPTION_KEY — never core's key.
+  refreshTokenEnc String           @map("refresh_token_enc")
+  status          ConnectionStatus @default(ACTIVE)
+  /// Error message from the last permanent provider-auth failure.
+  lastError       String?          @map("last_error")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+  deletedAt       DateTime?        @map("deleted_at")
+
+  @@index([accountEmail])
+  @@map("connections")
+}
+
+/// Idempotency records for mutating operations (at-least-once callers).
+/// Created as an in-flight RESERVATION before the provider mutation runs
+/// (responseJson null), completed with the response after — so concurrent
+/// duplicates cannot both execute. A replayed completed key returns the
+/// stored response without touching the provider.
+model IdempotencyRecord {
+  key          String   @id
+  operation    String
+  /// SHA-256 of the operation input — a key replayed with a DIFFERENT
+  /// payload is rejected instead of leaking the stored response.
+  requestHash  String   @map("request_hash")
+  /// JSON-serialized operation response; null while the original request is
+  /// still in flight.
+  responseJson String?  @map("response_json")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("idempotency_records")
+}
