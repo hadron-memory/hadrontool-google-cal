@@ -185,6 +185,42 @@ describe('POST /ops/:operation', () => {
     expect(res.status).toBe(200);
   });
 
+  it.each([
+    ['a zone-less dateTime without a timeZone', { dateTime: '2026-07-20T09:00:00' }],
+    ['an all-day date not shaped YYYY-MM-DD', { date: '20/07/2026' }],
+    ['a boundary with neither dateTime nor date', { timeZone: 'America/Los_Angeles' }],
+  ])('update-event rejects an invalid start (%s) before any provider call', async (_label, start) => {
+    const connectionId = await seedConnection();
+    const provider = fakeProvider();
+    const app = createApp(db, provider);
+
+    const res = await request(app)
+      .post('/ops/update-event')
+      .set(AUTH)
+      .send({ connectionId, eventId: 'evt-1', start });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('validation_error');
+    expect(provider.calls.filter(([m]) => m === 'updateEvent')).toHaveLength(0);
+  });
+
+  it('update-event accepts a valid start and passes it to the provider', async () => {
+    const connectionId = await seedConnection();
+    const provider = fakeProvider();
+    const app = createApp(db, provider);
+
+    const res = await request(app)
+      .post('/ops/update-event')
+      .set(AUTH)
+      .send({ connectionId, eventId: 'evt-1', start: WINDOW.start, end: WINDOW.end });
+    expect(res.status).toBe(200);
+    expect(res.body.event.id).toBe('evt-1');
+
+    const [method, args] = provider.calls[0];
+    expect(method).toBe('updateEvent');
+    expect(args[2]).toBe('evt-1');
+    expect(args[3]).toMatchObject({ start: WINDOW.start, end: WINDOW.end });
+  });
+
   it('responds to an invitation with the neutral vocabulary', async () => {
     const connectionId = await seedConnection();
     const provider = fakeProvider();
