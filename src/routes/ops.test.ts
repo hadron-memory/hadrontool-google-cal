@@ -204,6 +204,64 @@ describe('POST /ops/:operation', () => {
     expect(res.status).toBe(200);
   });
 
+  describe.each(['start', 'end'] as const)('update-event %s boundary', (field) => {
+    it.each([
+      ['a zone-less dateTime without a timeZone', { dateTime: '2026-07-20T09:00:00' }, 'timeZone'],
+      ['an all-day date not shaped YYYY-MM-DD', { date: '20/07/2026' }, 'YYYY-MM-DD'],
+      ['neither dateTime nor date', { timeZone: 'America/Los_Angeles' }, 'exactly one'],
+      ['both dateTime and date', { dateTime: '2026-07-20T09:00:00Z', date: '2026-07-20' }, 'exactly one'],
+    ])('rejects %s, naming the field and rule, with no provider call at all', async (_label, boundary, reason) => {
+      const connectionId = await seedConnection();
+      const provider = fakeProvider();
+      const app = createApp(db, provider);
+
+      const res = await request(app)
+        .post('/ops/update-event')
+        .set(AUTH)
+        .send({ connectionId, eventId: 'evt-1', [field]: boundary });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('validation_error');
+      expect(res.body.field).toContain(field);
+      expect(res.body.reason).toContain(reason);
+      expect(provider.calls).toHaveLength(0);
+    });
+  });
+
+  it('update-event accepts valid start and end boundaries and forwards them to the provider', async () => {
+    const connectionId = await seedConnection();
+    const provider = fakeProvider();
+    const app = createApp(db, provider);
+
+    const res = await request(app)
+      .post('/ops/update-event')
+      .set(AUTH)
+      .send({ connectionId, eventId: 'evt-1', start: WINDOW.start, end: WINDOW.end });
+    expect(res.status).toBe(200);
+    expect(res.body.event.id).toBe('evt-1');
+
+    const update = provider.calls.find(([m]) => m === 'updateEvent');
+    expect(update).toBeDefined();
+    const [, [, , eventId, patch]] = update!;
+    expect(eventId).toBe('evt-1');
+    expect(patch).toMatchObject({ start: WINDOW.start, end: WINDOW.end });
+  });
+
+  it('update-event accepts an offset-carrying dateTime and an all-day date', async () => {
+    const connectionId = await seedConnection();
+    const app = createApp(db, fakeProvider());
+
+    await request(app)
+      .post('/ops/update-event')
+      .set(AUTH)
+      .send({ connectionId, eventId: 'evt-1', start: { dateTime: '2026-07-20T09:00:00-07:00' } })
+      .expect(200);
+    await request(app)
+      .post('/ops/update-event')
+      .set(AUTH)
+      .send({ connectionId, eventId: 'evt-1', start: { date: '2026-07-20' }, end: { date: '2026-07-21' } })
+      .expect(200);
+  });
+
   it('responds to an invitation with the neutral vocabulary', async () => {
     const connectionId = await seedConnection();
     const provider = fakeProvider();
