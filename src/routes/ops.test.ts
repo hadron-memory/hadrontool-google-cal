@@ -152,6 +152,25 @@ describe('POST /ops/:operation', () => {
     expect(provider.calls.filter(([m]) => m === 'createEvent')).toHaveLength(0);
   });
 
+  it('rejects an event boundary carrying NEITHER dateTime nor date', async () => {
+    const connectionId = await seedConnection();
+    const provider = fakeProvider();
+    const app = createApp(db, provider);
+
+    const res = await request(app)
+      .post('/ops/create-event')
+      .set(AUTH)
+      .send({
+        connectionId,
+        title: 'Empty boundary',
+        start: { timeZone: 'America/Los_Angeles' },
+        end: WINDOW.end,
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('validation_error');
+    expect(provider.calls.filter(([m]) => m === 'createEvent')).toHaveLength(0);
+  });
+
   it('rejects a zone-less dateTime without a timeZone', async () => {
     const connectionId = await seedConnection();
     const app = createApp(db, fakeProvider());
